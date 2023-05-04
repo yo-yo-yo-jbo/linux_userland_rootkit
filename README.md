@@ -88,3 +88,42 @@ Let's examine this code carefully:
 - We create a new function `readdir` that hooks the original function. As we said, it first resolves the original `readdir` by using the `dlsym` function, which can get a `RTLD_NEXT` constant to get the *next symbol* - in our case, that'd be the original one.
 - We then create a loop that calls the original `readdir` function - if it fails or finishes (indicated by returning `NULL`) then we simply return the `NULL` result. Otherwise, we check that the `FILENAME_TO_HIDE` constant is not in the `d_name` member in the directory entry (by using `strstr`). This means we skip filenames we wish to hide.
 
+## Compilation and running
+We will need several compilation flags:
+- `-fPIC` to compile our shared object as a shared object (`PIC` stands for *position-independent code* - shared objects must be position independent).
+- `-shared` to make it a shared library; this essentially reduces output file size, as well as avoid other things (like `_start` symbol, which is the entry point in executables).
+- `-D_GNU_SOURCE` to have a predefined `_GNU_SOURCE` constant - this is essential to use the `RTLD_NEXT` constant, and is well-documented.
+- We use `-ldl` linker flag to statically link with `libdl` - that's necessary  for using `dlsym`.
+
+Here is an experimental run:
+```c
+┌──(root㉿jbo-nix)-[/tmp/experiment]
+└─# gcc -Wall -fPIC -shared -D_GNU_SOURCE hider.c -ohider.so -ldl
+
+┌──(root㉿jbo-nix)-[/tmp/experiment]
+└─# echo /tmp/experiment/hider.so >> /etc/ld.so.preload
+
+┌──(root㉿jbo-nix)-[/tmp/experiment]
+└─# touch example
+
+┌──(root㉿jbo-nix)-[/tmp/experiment]
+└─# touch example2
+
+┌──(root㉿jbo-nix)-[/tmp/experiment]
+└─# ls -la
+total 28
+drwxr-xr-x  2 jbo  jbo   4096 May  4 07:38 .
+drwxrwxrwt 11 root root  4096 May  4 07:37 ..
+-rw-r--r--  1 jbo  jbo    778 May  4 07:33 hider.c
+-rwxr-xr-x  1 root root 15464 May  4 07:37 hider.so
+
+┌──(root㉿jbo-nix)-[/tmp/experiment]
+└─#
+```
+
+Let's iterate:
+- First command simply compiles the shared object, as we described.
+- We compile the shared object and then add it to `/etc/ld.so.preload` file, as we described earlier. Note you have to be running as root to do that.
+- We create two files with the `touch` command - one called `example`, the other - `example2`.
+- We run `ls -la` and see those file have bee removed from directory listing!
+
