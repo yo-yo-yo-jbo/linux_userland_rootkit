@@ -203,3 +203,14 @@ cleanup:
 This is quite similar. The only difference is that `cmdline` is an array (so we only examine it's first element) and might be `NULL`.  
 Also, calls to `readproc` must use `freeproc` on previous entries if the input buffer (`return_buf`) was `NULL`. I usually define macros to do those things (I defined `FREEPROC`).
 
+## Summary
+In this blogpost we've discussed several topics - `loader preload`, using `dlsym` as well as very basic hooking.  
+The most amazing aspect is that the entire code is less than 100 lines long!  
+While not being a bulletproof solution, it's certainly a viable way of hiding files and processes from unsuspecting admins.
+
+I put [hider.c](hider.c) and [Makefile](Makefile) files in this respository that contain the entire "hider" rootkit.
+To install it, just add it to `/etc/ld.so.preload` as we've done earlier (requires running as root).  
+
+Stay tuned!
+
+Jonathan Bar Or
