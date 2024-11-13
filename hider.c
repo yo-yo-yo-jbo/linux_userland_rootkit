@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <dirent.h>
 #include <string.h>
@@ -50,7 +51,7 @@ readdir(DIR* dirp)
     return ret;
 }
 
-/* will fix when have the time */
+/* will fix when have the time - Humza */
 proc_t*
 readproc(PROCTAB* PT, proc_t* return_buf)
 {
