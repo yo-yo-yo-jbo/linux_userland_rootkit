@@ -213,4 +213,4 @@ To install it, just add it to `/etc/ld.so.preload` as we've done earlier (requir
 
 Stay tuned!
 
-Jonathan Bar Or
+Jonathan Bar Or (https://jonathanbaror.com)
